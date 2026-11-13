@@ -69,10 +69,10 @@ body.dragging::after{content:"ここで離すと読み込みます";position:fix
 .ghead .gname small{font-weight:400;color:var(--sub);margin-left:6px}
 .gbulk{display:flex;gap:6px;flex:1 1 300px}
 .gbulk input{padding:6px 8px;font-size:13px}
-.item{display:grid;grid-template-columns:92px 1fr auto;gap:10px;padding:10px 12px;border-top:1px solid var(--line);align-items:center}
+.item{display:grid;grid-template-columns:150px 1fr auto;gap:10px;padding:10px 12px;border-top:1px solid var(--line);align-items:center}
 .item.nodate{background:#fffaf6}
-.thumb{width:92px;height:69px;background:#e7ebf0;border-radius:4px;display:flex;align-items:center;justify-content:center;overflow:hidden}
-.thumb img{max-width:100%;max-height:100%;display:block}
+.thumb{width:150px;height:112px;background:#e7ebf0;border-radius:4px;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.thumb img,.thumb canvas{max-width:100%;max-height:100%;display:block}
 .meta .top{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;margin-bottom:6px}
 .no{font-weight:700;font-size:13px;background:#22303f;color:#fff;border-radius:4px;padding:1px 7px}
 .fname{font-size:12px;color:var(--sub);word-break:break-all}
@@ -106,8 +106,8 @@ body.dragging::after{content:"ここで離すと読み込みます";position:fix
 .bar input{max-width:360px;flex:1 1 220px;padding:8px 9px;font-size:13px}
 .toast{position:fixed;left:50%;bottom:80px;transform:translateX(-50%);background:#22303f;color:#fff;padding:9px 16px;border-radius:20px;font-size:13px;display:none;z-index:10;max-width:90vw}
 @media (max-width:640px){
-  .item{grid-template-columns:72px 1fr;}
-  .thumb{width:72px;height:54px}
+  .item{grid-template-columns:120px 1fr;}
+  .thumb{width:120px;height:90px}
   .ops{grid-column:1 / -1;flex-direction:row;justify-content:flex-end}
   .fields{grid-template-columns:1fr}
   .bar input{max-width:none}
@@ -117,7 +117,7 @@ body.dragging::after{content:"ここで離すと読み込みます";position:fix
 <body>
 <header>
   <h1>工事写真台紙メーカー</h1>
-  <p>写真を読み込むと、写真台紙（A4縦・1ページ3枚）のExcelを作ります　<span style="opacity:.6">版 11/13 <span id="jsmark"></span></span></p>
+  <p>写真を読み込むと、写真台紙（A4縦・1ページ3枚）のExcelを作ります　<span style="opacity:.6">版 11/13-黒板 <span id="jsmark"></span></span></p>
 </header>
 <main>
   <section class="card">
@@ -603,7 +603,7 @@ if (typeof module !== 'undefined') module.exports = DaishiBuilder;
               var place = (fromFolder && parts.length>=3) ? parts[parts.length-2] : '';
               if (!batchGroups[key]){ batchGroups[key]={id:++gid, label:key, items:[]}; order.push(key); }
               batchGroups[key].items.push({ name:parts[parts.length-1], date:d, dateText:DaishiBuilder.fmtDate(d), place:place,
-                blob:sm.blob, w:sm.w, h:sm.h, url:URL.createObjectURL(sm.blob), hadDate:!!d, rot:0, out:null });
+                blob:sm.blob, w:sm.w, h:sm.h, url:URL.createObjectURL(sm.blob), hadDate:!!d, rot:0, out:null, board:true, bpos:'bl' });
             });
           });
         }).catch(function(e){ skipped.push(a.path); fails.push(a.path+'（'+(a.file.type||'種類不明')+'・'+Math.round(a.file.size/1024)+'KB'+(e&&e.message?'・'+e.message:'')+'）'); }).then(function(){ done++; setProg(done/imgs.length); });
@@ -662,6 +662,79 @@ if (typeof module !== 'undefined') module.exports = DaishiBuilder;
     return w;
   }
 
+  /* ---- 工事黒板 ---- */
+  var COMPANY='株式会社西東京建設';
+  var BPOS=[['bl','左下'],['br','右下'],['tl','左上'],['tr','右上']];
+  var FONT='"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Meiryo",sans-serif';
+  var imgCache={};
+  function loadImage(url){
+    if (imgCache[url]) return imgCache[url];
+    imgCache[url]=new Promise(function(res,rej){ var im=new Image(); im.onload=function(){ res(im); }; im.onerror=rej; im.src=url; });
+    return imgCache[url];
+  }
+  function boardRows(it){ return [['工事名',$('kojimei').value.trim()],['撮影箇所',(it.place||'').trim()],['撮影日',it.dateText||''],['施工者',COMPANY]]; }
+  function drawBoard(ctx,W,H,it){
+    var land = W>=H;
+    var bw=Math.round((land?0.40:0.60)*W), rh=Math.max(4,Math.round(bw*0.115)), bh=rh*4;
+    var m=Math.round(Math.min(W,H)*0.025);
+    var p=it.bpos||'bl';
+    var x = p.charAt(1)==='l' ? m : W-bw-m;
+    var y = p.charAt(0)==='t' ? m : H-bh-m;
+    var lc=Math.round(bw*0.26), lw=Math.max(1,bw*0.006), pad=rh*0.18;
+    ctx.save();
+    ctx.fillStyle='#fff'; ctx.fillRect(x,y,bw,bh);
+    ctx.strokeStyle='#000'; ctx.lineWidth=lw;
+    ctx.strokeRect(x+lw/2,y+lw/2,bw-lw,bh-lw);
+    ctx.beginPath();
+    for (var i=1;i<4;i++){ ctx.moveTo(x,y+rh*i); ctx.lineTo(x+bw,y+rh*i); }
+    ctx.moveTo(x+lc,y); ctx.lineTo(x+lc,y+bh); ctx.stroke();
+    ctx.fillStyle='#000'; ctx.textBaseline='middle';
+    boardRows(it).forEach(function(r,i){
+      var cy=y+rh*i+rh/2;
+      // 見出し
+      var fs=rh*0.42; ctx.font='bold '+fs+'px '+FONT;
+      while (ctx.measureText(r[0]).width > lc-pad*2 && fs>rh*0.2){ fs-=0.5; ctx.font='bold '+fs+'px '+FONT; }
+      ctx.textAlign='center'; ctx.fillText(r[0], x+lc/2, cy);
+      // 内容
+      var t=r[1], fv=rh*0.48, maxw=bw-lc-pad*2;
+      ctx.font=fv+'px '+FONT;
+      while (ctx.measureText(t).width > maxw && fv>rh*0.22){ fv-=0.5; ctx.font=fv+'px '+FONT; }
+      ctx.save(); ctx.beginPath(); ctx.rect(x+lc+lw,y+rh*i,bw-lc-lw*2,rh); ctx.clip();
+      ctx.textAlign='left'; ctx.fillText(t, x+lc+pad, cy); ctx.restore();
+    });
+    ctx.restore();
+  }
+  function drawThumb(cv,it){
+    var c=cur(it);
+    return loadImage(c.url).then(function(im){
+      var s=Math.min(184/c.w,138/c.h), w=Math.max(1,Math.round(c.w*s)), h=Math.max(1,Math.round(c.h*s));
+      cv.width=w; cv.height=h;
+      var ctx=cv.getContext('2d'); ctx.drawImage(im,0,0,w,h);
+      if (it.board) drawBoard(ctx,w,h,it);
+    }).catch(function(){});
+  }
+  function composeFull(it){
+    var c=cur(it);
+    if (!it.board) return Promise.resolve(c);
+    return loadImage(c.url).then(function(im){
+      var cv=document.createElement('canvas'); cv.width=c.w; cv.height=c.h;
+      var ctx=cv.getContext('2d'); ctx.drawImage(im,0,0,c.w,c.h); drawBoard(ctx,c.w,c.h,it);
+      return new Promise(function(res){ cv.toBlob(function(b){ res({blob:b,w:c.w,h:c.h}); },'image/jpeg',0.85); });
+    });
+  }
+  function segControl(opts, current, onPick){
+    var w=document.createElement('div'); w.className='seg';
+    opts.forEach(function(o){
+      var b=document.createElement('button'); b.type='button'; b.textContent=o[1];
+      if (current===o[0]) b.className='on';
+      b.onclick=function(){ onPick(o[0]); };
+      w.appendChild(b);
+    });
+    return w;
+  }
+  var thumbs=[], thumbTimer=null;
+  function redrawThumbsSoon(){ clearTimeout(thumbTimer); thumbTimer=setTimeout(function(){ thumbs.forEach(function(t){ drawThumb(t.cv,t.it); }); },300); }
+
   /* ---- 表示 ---- */
   function allItems(){ var a=[]; groups.forEach(function(g){ a=a.concat(g.items); }); return a; }
   function render(){
@@ -669,6 +742,18 @@ if (typeof module !== 'undefined') module.exports = DaishiBuilder;
     list.innerHTML='';
     groups = groups.filter(function(g){ return g.items.length; });
     if (!groups.length) list.innerHTML='<div class="empty">まだ写真がありません</div>';
+    thumbs=[];
+    var all=allItems();
+    if (all.length){
+      var bb2=document.createElement('div'); bb2.className='portbar';
+      var l1=document.createElement('span'); l1.textContent='工事黒板（全'+all.length+'枚）：'; bb2.appendChild(l1);
+      var onAll = all.every(function(x){ return x.board; }) ? 1 : (all.every(function(x){ return !x.board; }) ? 0 : null);
+      bb2.appendChild(segControl([[1,'全部に入れる'],[0,'全部外す']], onAll, function(v){ all.forEach(function(x){ x.board=!!v; }); render(); }));
+      var l2=document.createElement('span'); l2.textContent='位置をまとめて：'; bb2.appendChild(l2);
+      var samePos = all.every(function(x){ return x.bpos===all[0].bpos; }) ? all[0].bpos : null;
+      bb2.appendChild(segControl(BPOS, samePos, function(v){ all.forEach(function(x){ x.bpos=v; }); render(); }));
+      list.appendChild(bb2);
+    }
     var ports = allItems().filter(isPortrait);
     if (ports.length){
       var pb=document.createElement('div'); pb.className='portbar';
@@ -689,12 +774,17 @@ if (typeof module !== 'undefined') module.exports = DaishiBuilder;
       g.items.forEach(function(it, ii){
         n++;
         var row=document.createElement('div'); row.className='item'+(it.dateText?'':' nodate');
-        row.innerHTML='<div class="thumb"><img alt=""></div>'+
+        row.innerHTML='<div class="thumb"><canvas></canvas></div>'+
           '<div class="meta"><div class="top"><span class="no"></span><span class="fname"></span></div>'+
           '<div class="fields"><div><span class="lab">撮影日</span><input type="text" class="d" placeholder="例）2026/11/12"></div>'+
           '<div><span class="lab">撮影箇所</span><input type="text" class="p"></div></div></div>'+
           '<div class="ops"><button class="btn small ghost up">↑</button><button class="btn small ghost dn">↓</button><button class="btn small ghost rm">除外</button></div>';
-        row.querySelector('img').src=cur(it).url;
+        var cv=row.querySelector('canvas'); thumbs.push({cv:cv,it:it}); drawThumb(cv,it);
+        var brw=document.createElement('div'); brw.className='rotrow';
+        var bl=document.createElement('span'); bl.className='lab'; bl.textContent='工事黒板'; brw.appendChild(bl);
+        brw.appendChild(segControl([[1,'入れる'],[0,'入れない']], it.board?1:0, function(v){ it.board=!!v; render(); }));
+        if (it.board) brw.appendChild(segControl(BPOS, it.bpos, function(v){ it.bpos=v; render(); }));
+        row.querySelector('.meta').appendChild(brw);
         if (isPortrait(it)){
           var rw=document.createElement('div'); rw.className='rotrow';
           var rl=document.createElement('span'); rl.className='lab'; rl.textContent='縦の写真の向き'; rw.appendChild(rl);
@@ -706,8 +796,8 @@ if (typeof module !== 'undefined') module.exports = DaishiBuilder;
         if (!it.hadDate){ var fl=document.createElement('span'); fl.className='flag'; fl.textContent= it.dateText ? '撮影日 手入力' : '撮影日 不明'; row.querySelector('.top').appendChild(fl); }
         var di=row.querySelector('.d'), pi=row.querySelector('.p');
         di.value=it.dateText; pi.value=it.place;
-        di.oninput=function(){ it.dateText=di.value.trim(); row.classList.toggle('nodate', !it.dateText); updateNotices(); };
-        pi.oninput=function(){ it.place=pi.value; };
+        di.oninput=function(){ it.dateText=di.value.trim(); row.classList.toggle('nodate', !it.dateText); updateNotices(); if(it.board) drawThumb(cv,it); };
+        pi.oninput=function(){ it.place=pi.value; if(it.board) drawThumb(cv,it); };
         row.querySelector('.up').onclick=function(){ move(gi,ii,-1); };
         row.querySelector('.dn').onclick=function(){ move(gi,ii,1); };
         row.querySelector('.rm').onclick=function(){ URL.revokeObjectURL(it.url); if(it.out) URL.revokeObjectURL(it.out.url); g.items.splice(ii,1); render(); };
@@ -746,14 +836,14 @@ if (typeof module !== 'undefined') module.exports = DaishiBuilder;
     var k=$('kojimei').value.trim().replace(/[\\\/:*?"<>|]/g,'');
     return '工事写真'+(k?'_'+k:'')+'_'+d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+'.xlsx';
   }
-  $('kojimei').oninput=function(){ if (!$('fname').dataset.touched) $('fname').value=defaultName(); };
+  $('kojimei').oninput=function(){ if (!$('fname').dataset.touched) $('fname').value=defaultName(); redrawThumbsSoon(); };
   $('fname').oninput=function(){ $('fname').dataset.touched='1'; };
 
   /* ---- 作成 ---- */
   $('btnMake').onclick=function(){
     var items=allItems(); if(!items.length) return;
     var btn=$('btnMake'); btn.disabled=true; btn.textContent='作成中…';
-    Promise.all(items.map(function(it){ var c=cur(it); return c.blob.arrayBuffer().then(function(b){ return {data:new Uint8Array(b), w:c.w, h:c.h, place:(it.place||'').trim(), date:it.dateText}; }); }))
+    Promise.all(items.map(function(it){ return composeFull(it).then(function(c){ return c.blob.arrayBuffer().then(function(b){ return {data:new Uint8Array(b), w:c.w, h:c.h, place:(it.place||'').trim(), date:it.dateText}; }); }); }))
     .then(function(ph){
       return DaishiBuilder.build(JSZip, ph, {kojimei:$('kojimei').value.trim()}).generateAsync({type:'blob', mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
     }).then(function(blob){
