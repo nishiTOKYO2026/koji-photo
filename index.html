@@ -117,7 +117,7 @@ body.dragging::after{content:"ここで離すと読み込みます";position:fix
 <body>
 <header>
   <h1>工事写真台紙メーカー</h1>
-  <p>写真を読み込むと、写真台紙（A4縦・1ページ3枚）のExcelを作ります　<span style="opacity:.6">版 11/13-黒板 <span id="jsmark"></span></span></p>
+  <p>写真を読み込むと、写真台紙（A4縦・1ページ3枚）のExcel・PDFを作ります　<span style="opacity:.6">版 11/16-PDF <span id="jsmark"></span></span></p>
 </header>
 <main>
   <section class="card">
@@ -153,13 +153,14 @@ body.dragging::after{content:"ここで離すと読み込みます";position:fix
 
 <div class="bar"><div class="in">
   <div class="sum" id="sum">写真 <b>0</b> 枚</div>
-  <input type="text" id="fname" placeholder="ファイル名">
-  <button class="btn primary" id="btnMake" disabled>Excelを作成</button>
+  <input type="text" id="fname" placeholder="ファイル名（拡張子なし）">
+  <button class="btn" id="btnMake" disabled>Excelを作成</button>
+  <button class="btn primary" id="btnPdf" disabled>PDFを作成</button>
 </div></div>
 <div class="toast" id="toast"></div>
 <div class="sheet" id="saveSheet" hidden>
   <div class="sheet-in">
-    <h3>Excelができました</h3>
+    <h3 id="saveTitle">Excelができました</h3>
     <p class="sname" id="saveName"></p>
     <div class="btns col">
       <button class="btn primary" id="btnShare">保存・共有する（「ファイル」→ Driveへ保存など）</button>
@@ -407,6 +408,115 @@ var DaishiBuilder = (function () {
   return { build: build, exifDate: exifDate, fmtDate: fmtDate };
 })();
 if (typeof module !== 'undefined') module.exports = DaishiBuilder;
+
+/* ===== 写真台紙 PDF（A4縦・1ページ3枚、画像として描画） ===== */
+var DaishiPdf = (function(){
+  var DPI=200, MM=DPI/25.4;                 // 1mm あたりのpx
+  var PW=210, PH=297;                       // A4 (mm)
+  var BLOCK_H=84, GAP=6, ROWS=9;            // 1枚分の高さ・間隔
+  var PHOTO_W=113, NO_W=7, TXT_W=38, MID=2; // 幅（mm）
+  var LEFT=(PW-(PHOTO_W+MID+NO_W+TXT_W))/2;
+  var TOP=(PH-(BLOCK_H*3+GAP*2))/2;
+  var FONT='"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Meiryo","MS PGothic",sans-serif';
+  function px(mm){ return Math.round(mm*MM); }
+
+  function fitText(ctx, t, maxw, size){
+    var s=size; ctx.font=s+'px '+FONT;
+    while (ctx.measureText(t).width>maxw && s>size*0.45){ s-=1; ctx.font=s+'px '+FONT; }
+  }
+  function hline(ctx,x1,x2,y,dotted){
+    ctx.save(); ctx.strokeStyle='#000'; ctx.lineWidth=Math.max(1,MM*0.2);
+    if (dotted){ ctx.setLineDash([MM*0.5,MM*0.5]); ctx.lineWidth=Math.max(1,MM*0.15); }
+    ctx.beginPath(); ctx.moveTo(x1,y); ctx.lineTo(x2,y); ctx.stroke(); ctx.restore();
+  }
+
+  /* pages: [[slot,...],...]  slot: {img(ImageBitmap/Image), w, h, no, kojimei, place, date} or null */
+  function drawPage(slots){
+    var cv=document.createElement('canvas'); cv.width=px(PW); cv.height=px(PH);
+    var ctx=cv.getContext('2d');
+    ctx.fillStyle='#fff'; ctx.fillRect(0,0,cv.width,cv.height);
+    var rh=BLOCK_H/ROWS;
+    for (var s=0;s<3;s++){
+      var y0=TOP+s*(BLOCK_H+GAP), sl=slots[s];
+      var tx=LEFT+PHOTO_W+MID+NO_W, tx2=tx+TXT_W;
+      // 写真
+      if (sl){
+        var pad=1.2, bw=PHOTO_W-pad*2, bh=BLOCK_H-pad*2;
+        var sc=Math.min(bw/sl.w, bh/sl.h), dw=sl.w*sc, dh=sl.h*sc;
+        ctx.drawImage(sl.img, px(LEFT+(PHOTO_W-dw)/2), px(y0+(BLOCK_H-dh)/2), px(dw), px(dh));
+      }
+      // No 行
+      ctx.fillStyle='#000'; ctx.textBaseline='middle';
+      if (sl){
+        ctx.font=px(3.4)+'px '+FONT; ctx.textAlign='center';
+        ctx.fillText('No', px(LEFT+PHOTO_W+MID+NO_W/2), px(y0+rh/2));
+        ctx.textAlign='left'; ctx.font=px(3.6)+'px "MS Mincho","Hiragino Mincho ProN",serif';
+        ctx.fillText(String(sl.no), px(tx+1), px(y0+rh/2));
+      }
+      hline(ctx, px(tx), px(tx+TXT_W*0.59), px(y0+rh), false);
+      // 説明 8行
+      var texts = sl ? [sl.kojimei, sl.place, sl.date] : [];
+      for (var k=1;k<=8;k++){
+        var yt=y0+rh*k, yb=y0+rh*(k+1);
+        if (k===1) hline(ctx,px(tx),px(tx2),px(yb),false);
+        else hline(ctx,px(tx),px(tx2),px(yb),true);
+        var t=texts[k-1];
+        if (t){ fitText(ctx,t,px(TXT_W-1.5),px(3.4)); ctx.textAlign='center'; ctx.fillText(t, px(tx+TXT_W/2), px((yt+yb)/2)); }
+      }
+    }
+    return cv;
+  }
+
+  function enc(s){ return new TextEncoder().encode(s); }
+  function buildPdf(jpegs){ // jpegs: [{data:Uint8Array,w,h}]
+    var parts=[], off=0, xref=[];
+    function add(x){ var b=(typeof x==='string')?enc(x):x; parts.push(b); off+=b.length; }
+    function obj(n, body, stream){
+      xref[n]=off;
+      add(n+' 0 obj\n'+body+'\n');
+      if (stream){ add('stream\n'); add(stream); add('\nendstream\n'); }
+      add('endobj\n');
+    }
+    add('%PDF-1.4\n'); add(new Uint8Array([37,226,227,207,211,10]));
+    var n=jpegs.length, kids=[];
+    for (var i=0;i<n;i++) kids.push((3+i*3)+' 0 R');
+    obj(1,'<< /Type /Catalog /Pages 2 0 R >>');
+    obj(2,'<< /Type /Pages /Kids ['+kids.join(' ')+'] /Count '+n+' >>');
+    var W=595.28, H=841.89;
+    jpegs.forEach(function(j,i){
+      var p=3+i*3, im=p+1, ct=p+2;
+      obj(p,'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 '+W+' '+H+'] /Resources << /XObject << /Im0 '+im+' 0 R >> >> /Contents '+ct+' 0 R >>');
+      obj(im,'<< /Type /XObject /Subtype /Image /Width '+j.w+' /Height '+j.h+' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length '+j.data.length+' >>', j.data);
+      var c='q '+W+' 0 0 '+H+' 0 0 cm /Im0 Do Q';
+      obj(ct,'<< /Length '+enc(c).length+' >>', enc(c));
+    });
+    var total=2+n*3, xo=off, x='xref\n0 '+(total+1)+'\n0000000000 65535 f \n';
+    for (var k=1;k<=total;k++) x+=('0000000000'+xref[k]).slice(-10)+' 00000 n \n';
+    add(x); add('trailer\n<< /Size '+(total+1)+' /Root 1 0 R >>\nstartxref\n'+xo+'\n%%EOF\n');
+    return new Blob(parts,{type:'application/pdf'});
+  }
+
+  /* items: [{blob,w,h,place,date}] → Promise<Blob> */
+  function make(items, kojimei, onProgress){
+    var pages=Math.max(1,Math.ceil(items.length/3)), out=[], seq=Promise.resolve();
+    function loadImg(blob){
+      return new Promise(function(res,rej){ var u=URL.createObjectURL(blob), im=new Image(); im.onload=function(){ res({im:im,u:u}); }; im.onerror=function(){ URL.revokeObjectURL(u); rej(new Error('画像を読めませんでした')); }; im.src=u; });
+    }
+    for (var p=0;p<pages;p++){ (function(p){
+      seq=seq.then(function(){
+        var idx=[p*3,p*3+1,p*3+2];
+        return Promise.all(idx.map(function(i){ return i<items.length ? loadImg(items[i].blob) : null; })).then(function(ims){
+          var slots=idx.map(function(i,k){ if(i>=items.length) return null; var it=items[i]; return {img:ims[k].im,w:it.w,h:it.h,no:i+1,kojimei:kojimei,place:it.place,date:it.date}; });
+          var cv=drawPage(slots);
+          ims.forEach(function(x){ if(x) URL.revokeObjectURL(x.u); });
+          return new Promise(function(res){ cv.toBlob(function(b){ b.arrayBuffer().then(function(ab){ out.push({data:new Uint8Array(ab),w:cv.width,h:cv.height}); cv.width=cv.height=1; if(onProgress) onProgress(p+1,pages); res(); }); },'image/jpeg',0.85); });
+        });
+      });
+    })(p); }
+    return seq.then(function(){ return buildPdf(out); });
+  }
+  return { make:make };
+})();
 
 </script>
 <script>
@@ -806,7 +916,7 @@ if (typeof module !== 'undefined') module.exports = DaishiBuilder;
       list.appendChild(box);
     });
     $('btnClear').disabled = !groups.length;
-    $('btnMake').disabled = !groups.length;
+    $('btnMake').disabled = !groups.length; $('btnPdf').disabled = !groups.length;
     var pages=Math.ceil(n/3);
     $('sum').innerHTML='写真 <b>'+n+'</b> 枚 ／ <b>'+pages+'</b> ページ';
     if (!$('fname').dataset.touched) $('fname').value = defaultName();
@@ -834,10 +944,30 @@ if (typeof module !== 'undefined') module.exports = DaishiBuilder;
   function defaultName(){
     var d=new Date(), p=function(x){return (x<10?'0':'')+x;};
     var k=$('kojimei').value.trim().replace(/[\\\/:*?"<>|]/g,'');
-    return '工事写真'+(k?'_'+k:'')+'_'+d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+'.xlsx';
+    return '工事写真'+(k?'_'+k:'')+'_'+d.getFullYear()+p(d.getMonth()+1)+p(d.getDate());
   }
   $('kojimei').oninput=function(){ if (!$('fname').dataset.touched) $('fname').value=defaultName(); redrawThumbsSoon(); };
   $('fname').oninput=function(){ $('fname').dataset.touched='1'; };
+
+  function baseName(){ return (($('fname').value.trim()||defaultName()).replace(/\.(xlsx|pdf)$/i,'')) || defaultName(); }
+  function deliver(blob,name,label){
+    if (downloads){
+      return downloads.save({filename:name, data:blob}).then(function(){ toast(label+'を保存しました'); }, function(err){
+        if (err && err.code==='declined') toast('保存をキャンセルしました'); else { openSheet(blob,name); }
+      });
+    }
+    openSheet(blob,name);
+  }
+  $('btnPdf').onclick=function(){
+    var items=allItems(); if(!items.length) return;
+    var btn=$('btnPdf'); btn.disabled=true; btn.textContent='作成中…';
+    Promise.all(items.map(function(it){ return composeFull(it).then(function(c){ return {blob:c.blob, w:c.w, h:c.h, place:(it.place||'').trim(), date:it.dateText}; }); }))
+    .then(function(list){
+      return DaishiPdf.make(list, $('kojimei').value.trim(), function(i,n){ btn.textContent='作成中… '+i+'/'+n+'ページ'; });
+    }).then(function(blob){ return deliver(blob, baseName()+'.pdf', 'PDF'); })
+    .catch(function(e){ toast('作成できませんでした：'+(e && e.message || e), 5000); })
+    .then(function(){ btn.disabled=false; btn.textContent='PDFを作成'; });
+  };
 
   /* ---- 作成 ---- */
   $('btnMake').onclick=function(){
@@ -847,7 +977,7 @@ if (typeof module !== 'undefined') module.exports = DaishiBuilder;
     .then(function(ph){
       return DaishiBuilder.build(JSZip, ph, {kojimei:$('kojimei').value.trim()}).generateAsync({type:'blob', mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
     }).then(function(blob){
-      var name=($('fname').value.trim()||defaultName()); if(!/\.xlsx$/i.test(name)) name+='.xlsx';
+      var name=baseName()+'.xlsx';
       if (downloads){
         return downloads.save({filename:name, data:blob}).then(function(){ toast('Excelを保存しました'); }, function(err){
           if (err && err.code==='declined') toast('保存をキャンセルしました'); else { openSheet(blob,name); }
@@ -860,6 +990,7 @@ if (typeof module !== 'undefined') module.exports = DaishiBuilder;
   var made=null;
   function openSheet(blob,name){
     made={blob:blob,name:name};
+    $('saveTitle').textContent = /\.pdf$/i.test(name) ? 'PDFができました' : 'Excelができました';
     $('saveName').textContent=name+'（'+Math.round(blob.size/1024)+'KB）';
     var canShare=false;
     try{ var f=new File([blob],name,{type:blob.type}); canShare=!!(navigator.canShare && navigator.canShare({files:[f]})); }catch(x){}
@@ -872,7 +1003,7 @@ if (typeof module !== 'undefined') module.exports = DaishiBuilder;
   $('btnSheetClose').onclick=function(){ $('saveSheet').hidden=true; };
   $('btnShare').onclick=function(){
     if(!made) return;
-    var f=new File([made.blob],made.name,{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+    var f=new File([made.blob],made.name,{type: /\.pdf$/i.test(made.name) ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
     navigator.share({files:[f], title:made.name}).then(function(){ $('saveSheet').hidden=true; toast('保存・共有しました'); }, function(e){
       if (e && e.name==='AbortError') return;
       toast('共有できませんでした。「ダウンロードする」をお試しください', 5000);
